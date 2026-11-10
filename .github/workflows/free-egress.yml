@@ -1,0 +1,67 @@
+name: free-egress
+
+# 免费境外出口：GitHub Actions runner（Azure 美国机房，4C16G，单次最长 6 小时）
+# 用法：把这文件放到你自己仓库的 .github/workflows/free-egress.yml，然后 Actions 页面点 Run workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'egress=socks5隧道 / exec=直接跑命令'
+        default: 'egress'
+        type: choice
+        options: [egress, exec]
+      tunnel:
+        description: 'egress 模式用哪个隧道'
+        default: 'bore'
+        type: choice
+        options: [bore, cloudflare]
+      minutes:
+        description: '保持多久（分钟，上限 350）'
+        default: '340'
+      cmd:
+        description: 'exec 模式要执行的命令'
+        default: 'curl -s https://ifconfig.me; echo; curl -sI https://www.google.com | head -3'
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: egress - socks5 + tunnel
+        if: ${{ inputs.mode == 'egress' }}
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq microsocks || pip install pysocks
+          microsocks -p 1080 -i 0.0.0.0 &
+          sleep 1
+          echo "== socks5 up on :1080 (runner 内网) =="
+          curl -s --socks5 127.0.0.1:1080 https://ifconfig.me || true
+          echo
+          END=$(( $(date +%s) + ${{ inputs.minutes }} * 60 ))
+          if [ "${{ inputs.tunnel }}" = "bore" ]; then
+            curl -sL -o bore.tgz https://github.com/ekzhang/bore/releases/download/v0.5.3/bore-v0.5.3-x86_64-unknown-linux-musl.tar.gz
+            tar xzf bore.tgz
+            echo "=========== 复制下面这一行，就是你的 socks5 地址 ==========="
+            while [ $(date +%s) -lt $END ]; do
+              ./bore local 1080 --to bore.pub 2>&1 | tee -a bore.log || true
+              sleep 5
+            done
+          else
+            curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+            chmod +x cloudflared
+            gost -L "socks5+ws://:8080" >/dev/null 2>&1 &
+            while [ $(date +%s) -lt $END ]; do
+              ./cloudflared tunnel --url http://localhost:8080 --no-autoupdate 2>&1 | tee -a cf.log || true
+              sleep 5
+            done
+          fi
+
+      - name: exec - 直接在境外出口跑命令
+        if: ${{ inputs.mode == 'exec' }}
+        run: |
+          echo "== 出口 IP =="
+          curl -s https://ifconfig.me; echo
+          echo "== 执行 =="
+          bash -c "${{ inputs.cmd }}"
