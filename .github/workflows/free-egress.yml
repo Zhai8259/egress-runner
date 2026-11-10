@@ -60,8 +60,10 @@ jobs:
 
       - name: exec - 直接在境外出口跑命令
         if: ${{ inputs.mode == 'exec' }}
+        env:
+          RUN_CMD: ${{ inputs.cmd }}
         run: |
           echo "== 出口 IP =="
           curl -s https://ifconfig.me; echo
           echo "== 执行 =="
-          bash -c "${{ inputs.cmd }}"
+          bash -c "$RUN_CMD"
